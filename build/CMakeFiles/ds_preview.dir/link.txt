@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Xlinker --dependency-file=CMakeFiles/ds_preview.dir/link.d CMakeFiles/ds_preview.dir/src/main.cpp.o -o ds_preview  libds_planner.a

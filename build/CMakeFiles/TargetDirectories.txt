@@ -1,0 +1,4 @@
+/workspace/build/CMakeFiles/ds_planner.dir
+/workspace/build/CMakeFiles/ds_preview.dir
+/workspace/build/CMakeFiles/edit_cache.dir
+/workspace/build/CMakeFiles/rebuild_cache.dir
