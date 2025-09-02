@@ -20,6 +20,69 @@ namespace ds
 		s1 = s0 + v0 * dt + 0.5 * a0 * dt * dt + (1.0 / 6.0) * j * dt * dt * dt;
 	}
 
+	// Distance required to change speed from v_start -> v_end with jerk/acc limits
+	// accelerating=true means v_end >= v_start, false means v_end <= v_start
+	static double distanceForSpeedChange(double v_start, double v_end, bool accelerating,
+			double a_max, double j_max)
+	{
+		double dv = accelerating ? (v_end - v_start) : (v_start - v_end);
+		if (dv < 0) return std::numeric_limits<double>::quiet_NaN();
+		double t_j = a_max / j_max;
+		// Triangular accel: cannot reach a_max
+		double t_tri = std::sqrt(std::max(0.0, dv / j_max));
+		if (t_tri <= t_j)
+		{
+			double a = 0.0, v = v_start, x = 0.0;
+			double a1, v1, x1; integrateJerk(accelerating ? +j_max : -j_max, t_tri, a, v, x, a1, v1, x1);
+			double a2, v2, x2; integrateJerk(accelerating ? -j_max : +j_max, t_tri, a1, v1, x1, a2, v2, x2);
+			(void)a2; (void)v2;
+			return x2 - x;
+		}
+		// Trapezoidal accel: reach a_max with plateau in acceleration
+		double t2_local = (dv - a_max * t_j) / a_max;
+		if (t2_local < 0) t2_local = 0;
+		double a = 0.0, v = v_start, x = 0.0;
+		double a1, v1, x1; integrateJerk(accelerating ? +j_max : -j_max, t_j, a, v, x, a1, v1, x1);
+		double a2, v2, x2; integrateJerk(0.0,                    t2_local, a1, v1, x1, a2, v2, x2);
+		double a3, v3, x3; integrateJerk(accelerating ? -j_max : +j_max, t_j, a2, v2, x2, a3, v3, x3);
+		(void)a3; (void)v3;
+		return x3 - x;
+	}
+
+	// Compute maximum reachable end speed given start speed and distance (forward pass)
+	static double reachableEndSpeedForward(double v_start, double distance,
+			double v_max, double a_max, double j_max)
+	{
+		v_start = clamp(v_start, 0.0, v_max);
+		if (distance <= 0) return v_start;
+		double lo = v_start;
+		double hi = v_max;
+		for (int i = 0; i < 70; ++i)
+		{
+			double mid = 0.5 * (lo + hi);
+			double s_need = distanceForSpeedChange(v_start, mid, true, a_max, j_max);
+			if (std::isnan(s_need) || s_need > distance) hi = mid; else lo = mid;
+		}
+		return lo;
+	}
+
+	// Compute maximum allowed start speed to end at v_end over distance (backward pass)
+	static double reachableStartSpeedBackward(double v_end, double distance,
+			double v_max, double a_max, double j_max)
+	{
+		v_end = clamp(v_end, 0.0, v_max);
+		if (distance <= 0) return v_end;
+		double lo = v_end;
+		double hi = v_max;
+		for (int i = 0; i < 70; ++i)
+		{
+			double mid = 0.5 * (lo + hi);
+			double s_need = distanceForSpeedChange(mid, v_end, false, a_max, j_max);
+			if (std::isnan(s_need) || s_need > distance) hi = mid; else lo = mid;
+		}
+		return lo;
+	}
+
 	// Helper to append a constant-jerk segment and advance state
 	static void appendSegment(std::vector<ProfileSegment> &segments,
 			double t0, double dt, double j, double &a, double &v, double &s)
@@ -224,6 +287,72 @@ namespace ds
 			a = a1; v = v1; x = x1; t_cursor = seg.t0 + seg.dt;
 		}
 		return {x, v, a};
+	}
+
+	Profile planPath(const std::vector<double> &waypoints,
+			double v_start, double v_end,
+			const MotionLimits &limits)
+	{
+		if (limits.v_max <= 0 || limits.a_max <= 0 || limits.j_max <= 0)
+			throw std::invalid_argument("Limits must be positive");
+		if (waypoints.size() < 2)
+			throw std::invalid_argument("At least two waypoints required");
+
+		// Check monotonicity and determine direction
+		double dir = (waypoints.back() >= waypoints.front()) ? 1.0 : -1.0;
+		for (size_t i = 1; i < waypoints.size(); ++i)
+		{
+			double d = waypoints[i] - waypoints[i - 1];
+			if (dir > 0 && d < -1e-12) throw std::invalid_argument("Waypoints must be monotonic");
+			if (dir < 0 && d >  1e-12) throw std::invalid_argument("Waypoints must be monotonic");
+		}
+
+		// Use speeds as magnitudes in planning, sign applied when building profiles
+		double v0 = std::abs(v_start);
+		double vN = std::abs(v_end);
+		v0 = clamp(v0, 0.0, limits.v_max);
+		vN = clamp(vN, 0.0, limits.v_max);
+
+		size_t N = waypoints.size();
+		std::vector<double> vf(N, 0.0), vb(N, 0.0), v(N, 0.0);
+		vf[0] = v0;
+		// Forward pass
+		for (size_t i = 0; i + 1 < N; ++i)
+		{
+			double dist = std::abs(waypoints[i + 1] - waypoints[i]);
+			double vend_max = reachableEndSpeedForward(vf[i], dist, limits.v_max, limits.a_max, limits.j_max);
+			vf[i + 1] = std::min(limits.v_max, vend_max);
+		}
+		// Backward pass
+		vb[N - 1] = vN;
+		for (size_t k = N - 1; k-- > 0; )
+		{
+			double dist = std::abs(waypoints[k + 1] - waypoints[k]);
+			double vstart_max = reachableStartSpeedBackward(vb[k + 1], dist, limits.v_max, limits.a_max, limits.j_max);
+			vb[k] = std::min(vf[k], vstart_max);
+		}
+		v = vb;
+
+		// Build concatenated profile
+		Profile total;
+		double t_offset = 0.0;
+		for (size_t i = 0; i + 1 < N; ++i)
+		{
+			Boundary b{};
+			b.s0 = waypoints[i];
+			b.s1 = waypoints[i + 1];
+			b.v0 = (dir > 0 ? +v[i] : -v[i]);
+			b.v1 = (dir > 0 ? +v[i + 1] : -v[i + 1]);
+			Profile sub = planDoubleS(b, limits);
+			for (auto seg : sub.segments)
+			{
+				seg.t0 += t_offset;
+				total.segments.push_back(seg);
+			}
+			t_offset += sub.total_time;
+		}
+		total.total_time = t_offset;
+		return total;
 	}
 }
 

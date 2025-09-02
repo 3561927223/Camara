@@ -45,5 +45,12 @@ namespace ds
 	struct State { double s; double v; double a; };
 	State sample(const Profile &profile, double t);
 
+	// Plan a multi-point path using forward-backward velocity lookahead.
+	// Waypoints are absolute positions along one axis and must be monotonic.
+	// v_start and v_end are signed velocities consistent with waypoint order.
+	Profile planPath(const std::vector<double> &waypoints,
+			double v_start, double v_end,
+			const MotionLimits &limits);
+
 }
 

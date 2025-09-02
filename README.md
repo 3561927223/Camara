@@ -13,6 +13,7 @@ cmake --build /workspace/build -j
 
 ```bash
 /workspace/build/ds_preview s0 s1 v0 v1 v_max a_max j_max dt
+/workspace/build/ds_preview --path w0,w1,... v_start v_end v_max a_max j_max dt
 ```
 
 - **s0/s1**: start/target position
@@ -28,6 +29,7 @@ Outputs CSV with columns: t,s,v,a
 
 ```bash
 /workspace/build/ds_preview 0 1 0 0 1.0 2.0 10.0 0.01 > traj.csv
+ /workspace/build/ds_preview --path 0,0.3,0.8,1.2,2.0 0 0 1.0 2.0 10.0 0.01 > traj_path.csv
 ```
 
 Open `traj.csv` to visualize or plot.
@@ -38,6 +40,7 @@ See `src/ds_planner.h`:
 
 - `ds::Profile ds::planDoubleS(const Boundary&, const MotionLimits&)` — compute the S-curve profile
 - `ds::State ds::sample(const Profile&, double t)` — sample s, v, a at time t
+ - `ds::Profile ds::planPath(const std::vector<double>&, double v_start, double v_end, const MotionLimits&)` — multi-point path with forward-backward lookahead
 
 ## Notes
 
