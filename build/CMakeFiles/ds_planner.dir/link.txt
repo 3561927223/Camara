@@ -1,0 +1,2 @@
+/usr/bin/ar qc libds_planner.a CMakeFiles/ds_planner.dir/src/ds_planner.cpp.o
+/usr/bin/ranlib libds_planner.a
